@@ -1,10 +1,11 @@
+import 'dart:convert';
+
 import 'package:agora_audio_broadcast/Utils/utils.dart';
 import 'package:agora_audio_broadcast/Widgets/user_view.dart';
 import 'package:agora_rtm/agora_rtm.dart';
 import 'package:flutter/material.dart';
 import 'package:agora_rtc_engine/rtc_engine.dart';
-import 'package:agora_rtc_engine/rtc_local_view.dart' as RtcLocalView;
-import 'package:agora_rtc_engine/rtc_remote_view.dart' as RtcRemoteView;
+
 
 class CallScreen extends StatefulWidget {
   final String channelName;
@@ -21,17 +22,18 @@ class _CallScreenState extends State<CallScreen> {
   final _users = <int>[];
   final _infoStrings = <String>[];
   bool muted = false;
-  RtcEngine _engine;
+  int localUid = 0;
   final _audience = <String>[];
   final _broadcaster = <String>[];
-
+  final _allUsers = <String>[];
   bool _isLogin = false;
   bool _isInChannel = false;
+  final Map<int, String> broadcasterMap = {};
+  int count = 0;
 
+  RtcEngine _engine;
   AgoraRtmClient _client;
   AgoraRtmChannel _channel;
-
-  String textMessage = '';
 
   @override
   void dispose() {
@@ -40,9 +42,9 @@ class _CallScreenState extends State<CallScreen> {
     // destroy sdk
     _engine.leaveChannel();
     _engine.destroy();
-    _broadcaster.clear();
-    _audience.clear();
-    textMessage = '';
+    _channel.leave();
+    _client.logout();
+    _client.destroy();
     super.dispose();
   }
 
@@ -55,6 +57,7 @@ class _CallScreenState extends State<CallScreen> {
   }
 
   Future<void> initialize() async {
+    
     if (appID.isEmpty) {
       setState(() {
         _infoStrings.add(
@@ -89,49 +92,53 @@ class _CallScreenState extends State<CallScreen> {
         final info = 'onError: $code';
         _infoStrings.add(info);
       });
-    }, audioVolumeIndication: (speakers, totalVolume) {
-      setState(() {
-        final info =
-            'Speaker $speakers is speaking with a volume of $totalVolume';
-        _infoStrings.add(info);
-      });
     }, joinChannelSuccess: (channel, uid, elapsed) async {
-      await _channel.sendMessage(
-          AgoraRtmMessage.fromText('${widget.role}: ${widget.usernName}'));
-      if (widget.role == ClientRole.Audience) {
-        _audience.add(widget.usernName);
-      } else {
-        _broadcaster.add(widget.usernName);
-      }
       setState(() {
         final info = 'onJoinChannel: $channel, uid: $uid';
         _infoStrings.add(info);
+        localUid = uid;
       });
+      if (widget.role == ClientRole.Audience) {
+        setState(() {
+          // _audience.add(widget.usernName);
+        });
+      } else {
+        setState(() {
+          _broadcaster.add(widget.usernName);
+          broadcasterMap[localUid] = widget.usernName;
+        });
+        await _channel.sendMessage(AgoraRtmMessage.fromText('$uid'));
+      print('Local user message sent');
+      }
     }, leaveChannel: (stats) {
       setState(() {
         _infoStrings.add('onLeaveChannel');
         _users.clear();
+        broadcasterMap.remove(localUid);
       });
-    }, userJoined: (uid, elapsed) {
+      print('User left: $localUid');
+    }, userJoined: (uid, elapsed) async {
+      await _channel.sendMessage(AgoraRtmMessage.fromText('$localUid'));
+      print('Remote hosts added - $uid');
       setState(() {
         final info = 'userJoined: $uid';
         _infoStrings.add(info);
         _users.add(uid);
       });
-    }, userOffline: (uid, elapsed) {
+    }, userOffline: (uid, elapsed) async {
+      await _channel.sendMessage(AgoraRtmMessage.fromText('$uid'));
+      print('Remote hosts removed - uid sent');
       setState(() {
         final info = 'userOffline: $uid';
         _infoStrings.add(info);
         _users.remove(uid);
+        broadcasterMap.remove(uid);
       });
     }));
   }
-
+  
   void _createClient() async {
     _client = await AgoraRtmClient.createInstance(appID);
-    _client.onMessageReceived = (AgoraRtmMessage message, String peerId) {
-      print("Peer msg: " + peerId + ", msg: " + message.text);
-    };
     _client.onConnectionStateChanged = (int state, int reason) {
       print('Connection state changed: ' +
           state.toString() +
@@ -148,45 +155,78 @@ class _CallScreenState extends State<CallScreen> {
 
     String userId = widget.usernName;
     await _client.login(null, userId);
-    print('Login success: ' + userId + ' and user role: ${widget.role}');
-    setState(() {
-      _isLogin = true;
+        print('Login success: ' + userId);
+        setState(() {
+          _isLogin = true;
     });
-    String channelName = widget.channelName;
-    _channel = await _createChannel(channelName);
-    await _channel.join();
-    print('Join channel success.');
-    setState(() {
-      _isInChannel = true;
-    });
+    _channel = await _createChannel(widget.channelName);
+        await _channel.join();
+        print('Join channel success.');
+        setState(() {
+          _isInChannel = true;
+        });
+    
+    
+    // await returnAudienceMembers(); 
+    // print('List of broadcaster: ${broadcasterMap.values}');
+    // print('List of audience member: $_audience');
+  }
 
-    await _channel.sendMessage(
-      AgoraRtmMessage.fromText('${widget.role}: ${widget.usernName}')
-    );
+  List<String> returnAudienceMembers() {
+  _allUsers.forEach((element) { 
+      if (!broadcasterMap.values.contains(element)) {
+        setState(() {
+          _audience.add(element);
+        });
+      }
+    });
+    print('List of audience member (inside): $_audience');
+    return ['$_audience'];
   }
 
   Future<AgoraRtmChannel> _createChannel(String name) async {
     AgoraRtmChannel channel = await _client.createChannel(name);
     channel.onMemberJoined = (AgoraRtmMember member) {
       print("Member joined: " + member.userId + ', channel: ' + member.channelId);
+      _client.sendMessageToPeer(widget.usernName, AgoraRtmMessage.fromText('$localUid'));
     };
     channel.onMemberLeft = (AgoraRtmMember member) {
       print("Member left: " + member.userId + ', channel: ' + member.channelId);
     };
     channel.onMessageReceived = (AgoraRtmMessage message, AgoraRtmMember member) {
-      print('Messager received - ${message.text} ');
-      if (message.text.split(': ')[0] == 'ClientRole.Broadcaster') {
-        _broadcaster.add(message.text.split(': ')[1]);
-        print('Broadcaster added: ${message.text.split(': ')[1]}');
+      print('Message Received - ${message.text} from ${member.userId}');
+      broadcasterMap[int.parse(message.text)] = member.userId;
+    };
+    channel.onMemberCountUpdated = (int memberCount){
+      channel.getMembers().then((value) {
+      for (var i = 0; i < memberCount; i++) {
+         setState(() {
+          _allUsers.add(value[i].userId);
+        });
+        print('All users in the channel ${_allUsers}');
       }
-      else{
-        _audience.add(message.text.split(': ')[1]);
-        print('Audience added: ${message.text.split(': ')[1]}');
+      _allUsers.forEach((element) { 
+      if (!broadcasterMap.values.contains(element)) {
+        setState(() {
+          _audience.add(element);
+        });
       }
+    });
+    print('List of audience: $_audience');
+    });
+      _allUsers.clear();
+    };
+    
+    channel.onMemberLeft = (AgoraRtmMember member){
+      print('Member left - ${member.userId}');
+      setState(() {
+        _audience.remove(member.userId);
+      });
+      print('List of audience when user left: $_audience');
     };
     return channel;
   }
-
+  
   Widget _toolbar() {
     if (widget.role == ClientRole.Audience) return Container();
     return Container(
@@ -269,16 +309,10 @@ class _CallScreenState extends State<CallScreen> {
             width: double.infinity,
             child: ListView.builder(
                 scrollDirection: Axis.horizontal,
-                itemCount: _broadcaster.length,
+                itemCount: broadcasterMap.length,
                 itemBuilder: (BuildContext context, int index) {
-                  return Column(
-                    children: [
-                      UserView(
-                        isSpeaking: true,
-                        role: ClientRole.Broadcaster,
-                      ),
-                      Text(_broadcaster[index]),
-                    ],
+                  return Text(
+                    '${broadcasterMap.values}'
                   );
                 }),
           ),
@@ -296,18 +330,10 @@ class _CallScreenState extends State<CallScreen> {
             height: MediaQuery.of(context).size.height * 0.2,
             width: double.infinity,
             child: ListView.builder(
-              scrollDirection: Axis.horizontal,
-                itemCount: _audience.length,
+                scrollDirection: Axis.horizontal,
+                itemCount: _audience.toSet().length,
                 itemBuilder: (BuildContext context, int index) {
-                  return Column(
-                    children: [
-                      UserView(
-                        isSpeaking: true,
-                        role: ClientRole.Audience,
-                      ),
-                      Text(_audience[index]),
-                    ],
-                  );
+                  return Text('${_audience.toSet().toList()[index]}');
                 }),
           ),
           _toolbar()
