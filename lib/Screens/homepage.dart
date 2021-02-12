@@ -145,7 +145,7 @@ class _MyHomePageState extends State<MyHomePage> {
                         MaterialPageRoute(
                           builder: (context) => CallScreen(
                             channelName: _channelName.text,
-                            usernName: _userName.text,
+                            userName: _userName.text,
                             role: _role,
                           )
                         )
