@@ -4,7 +4,6 @@ import 'package:agora_rtm/agora_rtm.dart';
 import 'package:flutter/material.dart';
 import 'package:agora_rtc_engine/rtc_engine.dart';
 
-
 class CallScreen extends StatefulWidget {
   final String channelName;
   final String userName;
@@ -24,15 +23,15 @@ class _CallScreenState extends State<CallScreen> {
   bool _isInChannel = false;
   final _broadcaster = <String>[];
   final _audience = <String>[];
-  final Map<int,String> _allUsers = {};
+  final Map<int, String> _allUsers = {};
 
   AgoraRtmClient _client;
   AgoraRtmChannel _channel;
   RtcEngine _engine;
 
+  final buttonStyle = TextStyle(color: Colors.white, fontSize: 15);
+
   int localUid;
-
-
 
   @override
   void dispose() {
@@ -76,8 +75,9 @@ class _CallScreenState extends State<CallScreen> {
   Future<void> _initAgoraRtcEngine() async {
     _engine = await RtcEngine.create(appID);
     await _engine.disableVideo();
-    await _engine.disableAudio();
-    
+    await _engine.enableAudio();
+    await _engine.setChannelProfile(ChannelProfile.LiveBroadcasting);
+    await _engine.setClientRole(widget.role);
   }
 
   /// Add agora event handlers
@@ -89,7 +89,7 @@ class _CallScreenState extends State<CallScreen> {
           _infoStrings.add(info);
         });
       },
-      joinChannelSuccess: (channel, uid, elapsed) async{
+      joinChannelSuccess: (channel, uid, elapsed) async {
         setState(() {
           final info = 'onJoinChannel: $channel, uid: $uid';
           _infoStrings.add(info);
@@ -102,7 +102,7 @@ class _CallScreenState extends State<CallScreen> {
           });
         }
       },
-      leaveChannel: (stats) async{
+      leaveChannel: (stats) async {
         setState(() {
           _infoStrings.add('onLeaveChannel');
           _users.clear();
@@ -147,24 +147,25 @@ class _CallScreenState extends State<CallScreen> {
 
     String userId = widget.userName;
     await _client.login(null, userId);
-        print('Login success: ' + userId);
-        setState(() {
-          _isLogin = true;
+    print('Login success: ' + userId);
+    setState(() {
+      _isLogin = true;
     });
     String channelName = widget.channelName;
     _channel = await _createChannel(channelName);
-        await _channel.join();
-        print('RTM Join channel success.');
-        setState(() {
-          _isInChannel = true;
-        });
+    await _channel.join();
+    print('RTM Join channel success.');
+    setState(() {
+      _isInChannel = true;
+    });
     await _channel.sendMessage(AgoraRtmMessage.fromText('$localUid:join'));
     _client.onMessageReceived = (AgoraRtmMessage message, String peerId) {
       print("Peer msg: " + peerId + ", msg: " + message.text);
-      
+
       var userData = message.text.split(':');
-      
+
       if (userData[1] == 'leave') {
+        print('In here');
         setState(() {
           _allUsers.remove(int.parse(userData[0]));
         });
@@ -174,65 +175,66 @@ class _CallScreenState extends State<CallScreen> {
         });
       }
     };
-    _channel.onMessageReceived = (AgoraRtmMessage message, AgoraRtmMember member){
-      print('Outside channel message received : ${message.text} from ${member.userId}');
-      
+    _channel.onMessageReceived =
+        (AgoraRtmMessage message, AgoraRtmMember member) {
+      print(
+          'Outside channel message received : ${message.text} from ${member.userId}');
+
       var userData = message.text.split(':');
-      
+
       if (userData[1] == 'leave') {
         setState(() {
           _allUsers.remove(int.parse(userData[0]));
         });
       } else {
+        print('Broadcasters list : $_users');
+        print('All users lists: ${_allUsers.values}');
         setState(() {
           _allUsers.putIfAbsent(int.parse(userData[0]), () => member.userId);
         });
       }
-
-      
-    
     };
-    
+
     for (var i = 0; i < _users.length; i++) {
       if (_allUsers.containsKey(_users[i])) {
         setState(() {
           _broadcaster.add(_allUsers[_users[i]]);
         });
-      }
-      else{
+      } else {
         setState(() {
           _audience.add('${_allUsers.values}');
         });
       }
-
     }
-
   }
 
   Future<AgoraRtmChannel> _createChannel(String name) async {
     AgoraRtmChannel channel = await _client.createChannel(name);
-    channel.onMemberJoined = (AgoraRtmMember member) async{
+    channel.onMemberJoined = (AgoraRtmMember member) async {
       print('Member joined : ${member.userId}');
       // setState(() {
 
       // });
-      await _client.sendMessageToPeer(member.userId, AgoraRtmMessage.fromText('$localUid:join'));
+      await _client.sendMessageToPeer(
+          member.userId, AgoraRtmMessage.fromText('$localUid:join'));
     };
-    channel.onMemberLeft = (AgoraRtmMember member) async{
+    channel.onMemberLeft = (AgoraRtmMember member) async {
       var reversedMap = _allUsers.map((k, v) => MapEntry(v, k));
       print('Member left : ${member.userId}:leave');
       print('Member left : ${reversedMap[member.userId]}:leave');
-      
+
       setState(() {
         _allUsers.remove(reversedMap[member.userId]);
       });
-      await channel.sendMessage(AgoraRtmMessage.fromText('${reversedMap[member.userId]}:leave'));
+      await channel.sendMessage(
+          AgoraRtmMessage.fromText('${reversedMap[member.userId]}:leave'));
     };
-    channel.onMessageReceived = (AgoraRtmMessage message, AgoraRtmMember member){
+    channel.onMessageReceived =
+        (AgoraRtmMessage message, AgoraRtmMember member) {
       print('Channel message received : ${message.text} from ${member.userId}');
-      
+
       var userData = message.text.split(':');
-      
+
       if (userData[1] == 'leave') {
         _allUsers.remove(int.parse(userData[0]));
       } else {
@@ -241,54 +243,73 @@ class _CallScreenState extends State<CallScreen> {
     };
     return channel;
   }
-  
+
   /// Toolbar layout
   Widget _toolbar() {
-    return Container(
-      alignment: Alignment.bottomCenter,
-      padding: const EdgeInsets.symmetric(vertical: 48),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: <Widget>[
-          RawMaterialButton(
-            onPressed: _onToggleMute,
-            child: Icon(
-              muted ? Icons.mic_off : Icons.mic,
-              color: muted ? Colors.white : Colors.blueAccent,
-              size: 20.0,
+    return widget.role == ClientRole.Audience
+        ? Container()
+        : Container(
+            alignment: Alignment.bottomCenter,
+            padding: const EdgeInsets.symmetric(vertical: 48),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+              children: <Widget>[
+                RawMaterialButton(
+                  onPressed: _onToggleMute,
+                  child: Row(
+                    children: [
+                      Icon(
+                        muted ? Icons.mic_off : Icons.mic,
+                        color: muted ? Colors.white : Colors.blueAccent,
+                        size: 20.0,
+                      ),
+                      SizedBox(
+                        width: 5,
+                      ),
+                      muted
+                          ? Text(
+                              'Unmute',
+                              style: buttonStyle,
+                            )
+                          : Text(
+                              'Mute',
+                              style: buttonStyle.copyWith(color: Colors.black),
+                            )
+                    ],
+                  ),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10)),
+                  elevation: 2.0,
+                  fillColor: muted ? Colors.blueAccent : Colors.white,
+                  padding: const EdgeInsets.all(15.0),
+                ),
+                RawMaterialButton(
+                  onPressed: () => _onCallEnd(context),
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.call_end,
+                        color: Colors.white,
+                        size: 20,
+                      ),
+                      SizedBox(
+                        width: 5,
+                      ),
+                      Text(
+                        'Disconnect',
+                        style: buttonStyle,
+                      )
+                    ],
+                  ),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10)),
+                  elevation: 2.0,
+                  fillColor: Colors.redAccent,
+                  padding: const EdgeInsets.all(15.0),
+                ),
+              ],
             ),
-            shape: CircleBorder(),
-            elevation: 2.0,
-            fillColor: muted ? Colors.blueAccent : Colors.white,
-            padding: const EdgeInsets.all(12.0),
-          ),
-          RawMaterialButton(
-            onPressed: () => _onCallEnd(context),
-            child: Icon(
-              Icons.call_end,
-              color: Colors.white,
-              size: 35.0,
-            ),
-            shape: CircleBorder(),
-            elevation: 2.0,
-            fillColor: Colors.redAccent,
-            padding: const EdgeInsets.all(15.0),
-          ),
-          RawMaterialButton(
-            onPressed: null,
-            child: Icon(
-              Icons.switch_camera,
-              color: Colors.blueAccent,
-              size: 20.0,
-            ),
-            shape: CircleBorder(),
-            elevation: 2.0,
-            fillColor: Colors.white,
-            padding: const EdgeInsets.all(12.0),
-          )
-        ],
-      ),
-    );
+          );
   }
 
   void _onCallEnd(BuildContext context) {
@@ -301,7 +322,6 @@ class _CallScreenState extends State<CallScreen> {
     });
     _engine.muteLocalAudioStream(muted);
   }
-
 
   @override
   Widget build(BuildContext context) {
@@ -317,15 +337,19 @@ class _CallScreenState extends State<CallScreen> {
             ),
           ),
           Container(
-            height: MediaQuery.of(context).size.height * 0.2,
-            width: double.infinity,
-            child: ListView.builder(
-              itemCount: _users.length,
-              itemBuilder: (BuildContext context, int index){
-                return _allUsers.containsKey(_users[index]) ? Text('${_allUsers[_users[index]]}') : Text('');
-              },
-            )
-          ),
+              height: MediaQuery.of(context).size.height * 0.2,
+              width: double.infinity,
+              child: ListView.builder(
+                itemCount: _users.length,
+                itemBuilder: (BuildContext context, int index) {
+                  return _allUsers.containsKey(_users[index])
+                      ? UserView(
+                          userName: _allUsers[_users[index]],
+                          role: ClientRole.Broadcaster,
+                        )
+                      : Container();
+                },
+              )),
           SizedBox(
             height: MediaQuery.of(context).size.height * 0.1,
           ),
@@ -337,15 +361,19 @@ class _CallScreenState extends State<CallScreen> {
             ),
           ),
           Container(
-            height: MediaQuery.of(context).size.height * 0.2,
-            width: double.infinity,
-            child: ListView.builder(
-              itemCount: _allUsers.length - _users.length,
-              itemBuilder: (BuildContext context, int index){
-                return _users.contains(_allUsers.keys.toList()[index]) ? Text('') : Text('${_allUsers.values.toList()[index]}');
-              },
-            )
-          ),
+              height: MediaQuery.of(context).size.height * 0.2,
+              width: double.infinity,
+              child: ListView.builder(
+                itemCount: _allUsers.length - _users.length,
+                itemBuilder: (BuildContext context, int index) {
+                  return _users.contains(_allUsers.keys.toList()[index])
+                      ? Container()
+                      : UserView(
+                          role: ClientRole.Audience,
+                          userName: _allUsers.values.toList()[index],
+                        );
+                },
+              )),
           _toolbar()
         ],
       )),
